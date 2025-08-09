@@ -18,7 +18,7 @@ Once HACS is installed:
    <img src="https://user-images.githubusercontent.com/693151/220521463-ff3b6de5-0abd-4f15-81cb-0a4663e3991a.png" width="400"/>
 2. Click the three dots at the top right and select **Custom repositories**.
    <img src="https://user-images.githubusercontent.com/693151/220522658-5c196e7e-82d7-422c-9e67-15a5e9c7d139.png" width="250"/>
-3. Paste `https://github.com/arevindh/tinxy-hacs`, select **Integration**, and click **Add**.
+3. Paste `https://github.com/arevindh/ha-tinxy-cloud`, select **Integration**, and click **Add**.
    <img src="https://user-images.githubusercontent.com/693151/220522068-aeb2423a-5d78-4318-a181-1037b2299a7b.png" width="400"/>
 4. Close the Custom repositories section.
 5. Click **Explore & Download** at the bottom right.
