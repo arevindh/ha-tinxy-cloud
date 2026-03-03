@@ -51,7 +51,7 @@ async def async_setup_entry(
         async_add_entities: Callback to add entities.
     """
     try:
-        apidata, coordinator = hass.data[DOMAIN][entry.entry_id]
+        apidata, coordinator = hass.data[DOMAIN][entry.entry_id][0], hass.data[DOMAIN][entry.entry_id][1]
         await coordinator.async_config_entry_first_refresh()
 
         all_devices = apidata.list_lights()
@@ -311,4 +311,3 @@ class TinxyLight(CoordinatorEntity, LightEntity):
             )
         except Exception as exc:
             LOGGER.error("Failed to turn OFF Tinxy light %s: %s", self.idx, exc)
-        await self.coordinator.async_request_refresh()

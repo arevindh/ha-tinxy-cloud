@@ -202,7 +202,6 @@ class TinxyFan(CoordinatorEntity, FanEntity):
             )
         except Exception as exc:
             _LOGGER.error("Failed to turn on Tinxy fan '%s': %s", self.device.name, exc)
-        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """
@@ -217,7 +216,6 @@ class TinxyFan(CoordinatorEntity, FanEntity):
             _LOGGER.info("Turned off Tinxy fan '%s'.", self.device.name)
         except Exception as exc:
             _LOGGER.error("Failed to turn off Tinxy fan '%s': %s", self.device.name, exc)
-        await self.coordinator.async_request_refresh()
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """
@@ -236,7 +234,6 @@ class TinxyFan(CoordinatorEntity, FanEntity):
             )
         except Exception as exc:
             _LOGGER.error("Failed to set preset mode for Tinxy fan '%s': %s", self.device.name, exc)
-        await self.coordinator.async_request_refresh()
 
     def _calculate_percent(self, preset_mode: Optional[str]) -> int:
         """
