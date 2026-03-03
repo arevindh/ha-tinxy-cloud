@@ -3,6 +3,8 @@
 
 Integrate [Tinxy.in](https://tinxy.in/) smart switches and devices with Home Assistant using this custom component.
 
+Join [Discord server](https://discord.gg/VH4jgz2f) for support.
+
 ## Overview
 
 This repository provides a Home Assistant integration for Tinxy smart devices, allowing you to control switches, fans, lights, and locks directly from Home Assistant.
