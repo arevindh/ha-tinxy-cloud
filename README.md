@@ -10,6 +10,14 @@ Uses MQTT push for real-time state updates and control with no polling and no de
 
 ---
 
+## Community
+
+Have questions, need help, or want to share feedback? Join the Tinxy community on Discord.
+
+**[Join Discord](https://discord.gg/cSPwkkQg)**
+
+---
+
 ## Supported Devices
 
 - Switches
@@ -48,12 +56,6 @@ All paired Tinxy devices will be discovered and added automatically.
 ## Local Control
 
 A local-network alternative is available at [arevindh/tinxylocal](https://github.com/arevindh/tinxylocal) for users who prefer not to use the cloud. Note that the local integration supports only a limited number of older device models. **EVA series devices are not supported** by the local integration.
-
----
-
-## Community
-
-For support and discussions, join the community on [Discord](https://discord.gg/cSPwkkQg).
 
 ---
 
