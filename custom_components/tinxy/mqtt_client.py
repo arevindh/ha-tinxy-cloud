@@ -118,9 +118,9 @@ class TinxyMQTTClient:
             return
 
         if brightness is not None:
-            payload = json.dumps({"n": relay_no, "bright": brightness, "by": "HA"})
+            payload = json.dumps({"n": relay_no, "bright": brightness, "by": "Home Assistant"})
         else:
-            payload = json.dumps({"n": relay_no, "on": "1" if state == "ON" else "0", "by": "HA"})
+            payload = json.dumps({"n": relay_no, "on": "1" if state == "ON" else "0", "by": "Home Assistant"})
 
         topic = f"/{device_id}"
         try:
