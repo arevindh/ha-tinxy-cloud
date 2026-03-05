@@ -1,36 +1,33 @@
 """
 Coordinator for Tinxy Home Assistant integration.
 
-Initial device state is loaded once from the REST API (so entities have a valid
-starting state before the first MQTT message arrives).  After that, all state
-updates are pushed in real-time by TinxyMQTTClient via async_update_from_mqtt().
-No periodic polling is performed.
+All device state is delivered via MQTT push only. At startup every relay is
+initialised with safe defaults; the broker's retained /info messages (buffered
+before coordinator.data is ready) are replayed on top immediately after,
+giving entities their correct last-known state.
 """
 
 
 import logging
-from typing import Any, Dict
-import async_timeout
+from typing import Any, Dict, List, Tuple
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .tinxycloud import TinxyAuthenticationException, TinxyException
+from .tinxycloud import TinxyException
 
 # Module-level logger
 _LOGGER = logging.getLogger(__name__)
-
-API_TIMEOUT_SECONDS: int = 15
 
 
 class TinxyUpdateCoordinator(DataUpdateCoordinator):
     """
     Coordinates device state for Home Assistant entities.
 
-    * First refresh – fetches state once from the REST API so entities can render
-      immediately at startup (before the MQTT broker delivers retained messages).
-    * Ongoing updates – driven entirely by MQTT pushes; no polling timer is set.
+    * First refresh - builds the state dict from the device list with safe defaults.
+    * Retained MQTT /info messages that arrive before the first refresh completes
+      are buffered and replayed on top of the defaults.
+    * Ongoing updates - driven entirely by MQTT pushes; no polling timer is set.
     """
 
     def __init__(self, hass: HomeAssistant, api_client: Any) -> None:
@@ -51,6 +48,8 @@ class TinxyUpdateCoordinator(DataUpdateCoordinator):
         self.api_client: Any = api_client
         # Static device list populated after sync_devices(); treated as immutable.
         self.all_devices: list[dict] = self.api_client.list_all_devices()
+        # Buffer for MQTT messages that arrive before coordinator.data is ready.
+        self._mqtt_buffer: List[Tuple[str, Dict[str, Any]]] = []
 
     # ------------------------------------------------------------------
     # DataUpdateCoordinator interface
@@ -58,41 +57,54 @@ class TinxyUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> Dict[str, dict]:
         """
-        Fetch initial device state from the REST API (called once on startup).
+        Build initial state from the device list with safe defaults.
+        Replays any buffered MQTT retained messages on top so the very first
+        state shown to the user reflects the broker's last-known device state.
 
         Returns:
-            Dict mapping composite relay IDs to merged device + state dicts.
+            Dict mapping composite relay IDs to device + state dicts.
 
         Raises:
-            ConfigEntryAuthFailed: On authentication errors.
-            UpdateFailed: On any other API error.
+            UpdateFailed: If the device list is unexpectedly empty.
         """
         try:
-            async with async_timeout.timeout(API_TIMEOUT_SECONDS):
-                status_result: dict = await self.api_client.get_all_status()
-                status_by_id: Dict[str, dict] = {}
+            status_by_id: Dict[str, dict] = {}
 
-                for device in self.all_devices:
-                    relay_id = device.get("id")
-                    if relay_id in status_result:
-                        status_by_id[relay_id] = {**device, **status_result[relay_id]}
-                    else:
-                        _LOGGER.debug("No initial status for device: %s", relay_id)
-                        status_by_id[relay_id] = {**device}
+            for device in self.all_devices:
+                relay_id = device.get("id")
+                if relay_id:
+                    status_by_id[relay_id] = {
+                        **device,
+                        "state": 0,
+                        "status": 0,
+                        "brightness": 0,
+                    }
 
-                _LOGGER.info(
-                    "Tinxy: loaded initial state for %d relays via REST.", len(status_by_id)
+            if not status_by_id:
+                raise UpdateFailed("No devices found - check API key and device setup.")
+
+            # Replay buffered MQTT retained messages over the defaults.
+            if self._mqtt_buffer:
+                _LOGGER.debug(
+                    "Tinxy: replaying %d buffered MQTT messages.", len(self._mqtt_buffer)
                 )
-                return status_by_id
+                for relay_id, state_dict in self._mqtt_buffer:
+                    if relay_id in status_by_id:
+                        status_by_id[relay_id] = {**status_by_id[relay_id], **state_dict}
+                self._mqtt_buffer.clear()
 
-        except TinxyAuthenticationException as auth_err:
-            _LOGGER.error("Tinxy: authentication failed: %s", auth_err)
-            raise ConfigEntryAuthFailed from auth_err
-        except TinxyException as api_err:
-            _LOGGER.error("Tinxy: REST API error during initial fetch: %s", api_err)
-            raise UpdateFailed(f"Error communicating with API: {api_err}") from api_err
+            _LOGGER.info(
+                "Tinxy: initialised state for %d relays (MQTT retained messages will follow).",
+                len(status_by_id),
+            )
+            return status_by_id
+
+        except UpdateFailed:
+            raise
+        except TinxyException as exc:
+            raise UpdateFailed(f"Tinxy error during setup: {exc}") from exc
         except Exception as exc:
-            _LOGGER.exception("Tinxy: unexpected error during initial fetch: %s", exc)
+            _LOGGER.exception("Tinxy: unexpected error during setup: %s", exc)
             raise UpdateFailed(f"Unexpected error: {exc}") from exc
 
     # ------------------------------------------------------------------
@@ -103,15 +115,17 @@ class TinxyUpdateCoordinator(DataUpdateCoordinator):
         """
         Merge MQTT state into the coordinator's data store and notify listeners.
 
-        Called by TinxyMQTTClient from within the HA event loop whenever a
-        /{device_id}/info message arrives.
+        If coordinator.data is not yet populated (first refresh still in progress),
+        the update is buffered and will be replayed once it completes.
 
         Args:
             relay_id:   Composite ID, e.g. "aabbcc112233ddeeff445566-2".
             state_dict: At minimum {"state": bool}; may include {"brightness": int}.
         """
         if self.data is None:
-            # Called before the initial REST fetch completes – ignore.
+            # First refresh not yet complete – buffer for replay.
+            self._mqtt_buffer.append((relay_id, state_dict))
+            _LOGGER.debug("Tinxy MQTT: buffered update for %s (coordinator not ready)", relay_id)
             return
 
         if relay_id not in self.data:

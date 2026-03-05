@@ -50,7 +50,7 @@ async def async_setup_entry(
         await coordinator.async_config_entry_first_refresh()
 
         all_devices = apidata.list_switches()
-        result = await apidata.get_all_status()
+        result = coordinator.data
         switch_entities: List[TinxySwitch] = []
 
         for device in all_devices:

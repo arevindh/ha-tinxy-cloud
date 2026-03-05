@@ -61,7 +61,7 @@ async def async_setup_entry(
 
     # Gather lock devices and their status
     all_devices: List[Dict[str, Any]] = apidata.list_locks()
-    status_result: Dict[str, Dict[str, Any]] = await apidata.get_all_status()
+    status_result: Dict[str, Dict[str, Any]] = coordinator.data
     lock_entities: List[TinxyLock] = []
 
     for device in all_devices:

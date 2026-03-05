@@ -71,7 +71,7 @@ async def async_setup_entry(
         await coordinator.async_config_entry_first_refresh()
 
         all_devices = apidata.list_fans()
-        result = await apidata.get_all_status()
+        result = coordinator.data
 
         fans: List[TinxyFan] = []
         for device in all_devices:

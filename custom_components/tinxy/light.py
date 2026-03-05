@@ -55,7 +55,7 @@ async def async_setup_entry(
         await coordinator.async_config_entry_first_refresh()
 
         all_devices = apidata.list_lights()
-        result = await apidata.get_all_status()
+        result = coordinator.data
         status_list = {
             device["id"]: {**device, **result[device["id"]]}
             for device in all_devices if device["id"] in result

@@ -13,8 +13,8 @@ from homeassistant.const import Platform, CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, TINXY_BACKEND
-from .tinxycloud import TinxyCloud, TinxyHostConfiguration
+from .const import DOMAIN, TINXY_BACKEND, CONF_MQTT_USERNAME, CONF_MQTT_PASSWORD
+from .tinxycloud import TinxyCloud, TinxyHostConfiguration, TinxyMQTTCredentials
 from .coordinator import TinxyUpdateCoordinator
 from .mqtt_client import TinxyMQTTClient
 
@@ -76,10 +76,37 @@ async def async_setup_entry(
     )
 
     # Create MQTT client wired to coordinator's push-update method
+    # Credentials are cached in entry.data to avoid an API call on every startup.
+    # The fetcher uses the cache on the first call and force-refreshes on auth failures.
+    _cred_fetched_once = False
+
+    async def _get_mqtt_credentials() -> TinxyMQTTCredentials:
+        nonlocal _cred_fetched_once
+        if not _cred_fetched_once and CONF_MQTT_USERNAME in entry.data:
+            _cred_fetched_once = True
+            LOGGER.debug("Tinxy: using cached MQTT credentials.")
+            return TinxyMQTTCredentials(
+                username=entry.data[CONF_MQTT_USERNAME],
+                password=entry.data[CONF_MQTT_PASSWORD],
+            )
+        # Fetch fresh credentials from the API (first run or after auth failure)
+        creds = await api.async_get_mqtt_credentials()
+        hass.config_entries.async_update_entry(
+            entry,
+            data={
+                **entry.data,
+                CONF_MQTT_USERNAME: creds.username,
+                CONF_MQTT_PASSWORD: creds.password,
+            },
+        )
+        _cred_fetched_once = True
+        LOGGER.debug("Tinxy: MQTT credentials fetched and cached.")
+        return creds
+
     mqtt_client = TinxyMQTTClient(
         hass=hass,
         on_state_update=coordinator.async_update_from_mqtt,
-        credentials_fetcher=api.async_get_mqtt_credentials,
+        credentials_fetcher=_get_mqtt_credentials,
     )
     # Give the REST client a reference so set_device_state() uses MQTT
     api.mqtt_client = mqtt_client

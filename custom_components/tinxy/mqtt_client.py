@@ -263,6 +263,9 @@ class TinxyMQTTClient:
                 state_dict["brightness"] = int(data["bright"])
             except (ValueError, TypeError):
                 pass
+            # A brightness command implies the relay is on
+            if "state" not in state_dict:
+                state_dict["state"] = True
 
         if not state_dict:
             return
@@ -292,6 +295,10 @@ class TinxyMQTTClient:
             relay_id = f"{device_id}-{relay_no}"
 
             state_dict: Dict[str, Any] = {"state": char == "1"}
+
+            # status field from /info marks the device as online (1) or offline (0)
+            if "status" in data:
+                state_dict["status"] = data["status"]
 
             # Parse brightness for this relay if available
             b_start = i * 3
