@@ -1,6 +1,10 @@
 
 # Tinxy Home Assistant Integration
 
+> **Important Notice**  
+> Users of the Tinxy cloud integration must update to version **5.0.0** before **10th March 2026**.  
+> Older versions will stop working after this date. Please update via HACS or manually at the earliest.
+
 A custom Home Assistant integration for [Tinxy.in](https://tinxy.in/) smart devices.  
 Uses MQTT push for real-time state updates and control with no polling and no delays.
 
