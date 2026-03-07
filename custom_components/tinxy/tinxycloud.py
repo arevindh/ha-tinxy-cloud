@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from .const import MQTT_SERVER, MQTT_PORT
+
 
 class TinxyException(Exception):
     """Base exception for Tinxy API errors."""
@@ -34,6 +36,16 @@ class TinxyHostConfiguration:
             raise TinxyAuthenticationException("No API token was provided.")
         if not self.api_url:
             raise TinxyException("No API URL was provided.")
+
+
+@dataclass
+class TinxyMQTTCredentials:
+    """Per-user MQTT broker credentials fetched from the Tinxy API."""
+
+    username: str            # "user-{userId}"
+    password: str            # mqttPassword from API
+    broker:   str = MQTT_SERVER
+    port:     int = MQTT_PORT
 
 
 class TinxyCloud:
@@ -74,6 +86,8 @@ class TinxyCloud:
         self.host_config = host_config
         self.web_session = web_session
         self.devices: List[Dict[str, Any]] = []
+        # Set by __init__.py after the MQTT client is created
+        self.mqtt_client: Optional[Any] = None
 
     async def tinxy_request(
         self, path: str, payload: Optional[Dict[str, Any]] = None, method: str = "GET"
@@ -119,6 +133,41 @@ class TinxyCloud:
             device_list.extend(self.parse_device(item))
         self.devices = device_list
 
+    async def async_get_mqtt_credentials(self) -> "TinxyMQTTCredentials":
+        """Fetch per-user MQTT credentials from the Tinxy API.
+
+        Endpoint: GET /v2/users/me
+        Response: {"userId": "…", "mqttPassword": "…"}
+
+        MQTT username is constructed as "user-{userId}".
+
+        Returns:
+            TinxyMQTTCredentials with username, password, broker and port.
+
+        Raises:
+            TinxyAuthenticationException: If the API returns an auth error.
+            TinxyException: On any other failure.
+        """
+        try:
+            data = await self.tinxy_request("v2/users/me")
+        except TinxyException as exc:
+            raise TinxyAuthenticationException(
+                f"Failed to fetch MQTT credentials: {exc}"
+            ) from exc
+
+        user_id  = data.get("userId")
+        password = data.get("mqttPassword")
+
+        if not user_id or not password:
+            raise TinxyAuthenticationException(
+                f"MQTT credentials response missing fields: {data}"
+            )
+
+        return TinxyMQTTCredentials(
+            username=f"user-{user_id}",
+            password=password,
+        )
+
     def list_switches(self) -> List[Dict[str, Any]]:
         """Return a list of all switch devices."""
         return [device for device in self.devices if device["device_type"] == "Switch"]
@@ -139,84 +188,6 @@ class TinxyCloud:
         """Return a list of all lock devices."""
         return [device for device in self.devices if device["gtype"] in self.GTYPE_LOCK]
 
-    async def get_device_state(self, device_id: str, device_number: str) -> Dict[str, Any]:
-        """Get the current state of a device.
-        
-        Args:
-            device_id: The device ID
-            device_number: The device number
-            
-        Returns:
-            Device state information
-        """
-        return await self.tinxy_request(
-            f"v2/devices/{device_id}/state?deviceNumber={device_number}"
-        )
-
-    def state_to_val(self, state: str) -> bool:
-        """Convert string state to boolean value.
-        
-        Args:
-            state: String state ("ON" or "OFF")
-            
-        Returns:
-            Boolean representation of the state
-        """
-        return state == "ON"
-
-    async def get_all_status(self) -> Dict[str, Dict[str, Any]]:
-        """Get status of all devices.
-        
-        Returns:
-            Dictionary mapping device IDs to their status information
-        """
-        status_data = await self.tinxy_request("v2/devices_state")
-        device_status = {}
-        
-        for status in status_data:
-            if "state" not in status:
-                continue
-                
-            if isinstance(status["state"], list):
-                # Handle multi-device status
-                for item in status["state"]:
-                    device_id = f"{status['_id']}-{item.get('number', 1)}"
-                    single_device = self._extract_device_state(item.get("state", {}))
-                    if "number" not in item:
-                        single_device["item"] = item
-                    device_status[device_id] = single_device
-            else:
-                # Handle single device status
-                device_id = f"{status['_id']}-1"
-                single_device = self._extract_device_state(status["state"])
-                device_status[device_id] = single_device
-
-        return device_status
-
-    def _extract_device_state(self, state_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract device state information from API response.
-        
-        Args:
-            state_data: Raw state data from API
-            
-        Returns:
-            Processed device state information
-        """
-        single_device = {}
-        
-        if "state" in state_data:
-            single_device["state"] = self.state_to_val(state_data["state"])
-        if "status" in state_data:
-            single_device["status"] = state_data["status"]
-        if "brightness" in state_data:
-            single_device["brightness"] = state_data["brightness"]
-        if "door" in state_data:  # For lock devices
-            single_device["door"] = state_data["door"]
-        if "colorTemperatureInKelvin" in state_data:
-            single_device["colorTemperatureInKelvin"] = state_data["colorTemperatureInKelvin"]
-            
-        return single_device
-
     async def set_device_state(
         self,
         item_id: str,
@@ -224,21 +195,49 @@ class TinxyCloud:
         state: str,
         brightness: Optional[int] = None,
         color_temp: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        """Set device state.
+    ) -> Optional[Dict[str, Any]]:
+        """Set device state via MQTT (preferred) or REST fallback.
+        
+        MQTT command format:
+          topic   : /{device_id}
+          payload : {"n": relay_no, "on": "1"|"0"}         (toggle)
+                    {"n": relay_no, "bright": 0-100}       (brightness)
+        
+        color_temp is not supported over MQTT; when provided the REST API is
+        used regardless of MQTT availability.
         
         Args:
-            item_id: Device identifier
-            device_number: Device number
-            state: Desired state
-            brightness: Optional brightness level
-            color_temp: Optional color temperature
+            item_id:       Tinxy device _id (the raw MongoDB ID).
+            device_number: 1-based relay/node number.
+            state:         "ON" or "OFF".
+            brightness:    Optional 0-100 brightness percentage.
+            color_temp:    Optional colour temperature in Kelvin.
             
         Returns:
-            API response
+            None when sent via MQTT; REST response dict when falling back.
         """
-        payload = {"request": {"state": state}, "deviceNumber": device_number}
-        
+        # Normalise types – platforms pass relay_no as str and state as int/str
+        relay_no_int: int = int(device_number)
+        if isinstance(state, int):
+            state_str = "ON" if state else "OFF"
+        else:
+            state_str = str(state).upper()
+
+        # --- MQTT path ---
+        if self.mqtt_client is not None and color_temp is None:
+            await self.mqtt_client.async_publish_command(
+                device_id=item_id,
+                relay_no=relay_no_int,
+                state=state_str,
+                brightness=brightness,
+            )
+            return None
+
+        # --- REST fallback (color_temp or no MQTT client) ---
+        payload: Dict[str, Any] = {
+            "request": {"state": state_str},
+            "deviceNumber": relay_no_int,
+        }
         if brightness is not None:
             payload["request"]["brightness"] = brightness
         if color_temp is not None:

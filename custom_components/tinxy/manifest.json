@@ -5,8 +5,8 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/arevindh/ha-tinxy-cloud",
-  "iot_class": "cloud_polling",
+  "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/arevindh/ha-tinxy-cloud/issues",
-  "requirements": [],
-  "version": "4.0.2"
+  "requirements": ["aiomqtt>=1.2.1"],
+  "version": "5.0.0"
 }

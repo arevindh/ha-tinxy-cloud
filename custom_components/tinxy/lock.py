@@ -56,12 +56,12 @@ async def async_setup_entry(
         entry: ConfigEntry for this integration.
         async_add_entities: Callback to add entities.
     """
-    apidata, coordinator = hass.data[DOMAIN][entry.entry_id]
+    apidata, coordinator = hass.data[DOMAIN][entry.entry_id][0], hass.data[DOMAIN][entry.entry_id][1]
     await coordinator.async_config_entry_first_refresh()
 
     # Gather lock devices and their status
     all_devices: List[Dict[str, Any]] = apidata.list_locks()
-    status_result: Dict[str, Dict[str, Any]] = await apidata.get_all_status()
+    status_result: Dict[str, Dict[str, Any]] = coordinator.data
     lock_entities: List[TinxyLock] = []
 
     for device in all_devices:
@@ -195,7 +195,6 @@ class TinxyLock(CoordinatorEntity, LockEntity):
             _LOGGER.info(f"Unlock command sent for lock {self.device.id}")
         except Exception as exc:
             _LOGGER.error(f"Failed to unlock lock {self.device.id}: {exc}")
-        await self.coordinator.async_request_refresh()
 
     async def async_lock(self, **kwargs: Any) -> None:
         """
@@ -211,4 +210,3 @@ class TinxyLock(CoordinatorEntity, LockEntity):
             _LOGGER.info(f"Lock command sent for lock {self.device.id}")
         except Exception as exc:
             _LOGGER.error(f"Failed to lock lock {self.device.id}: {exc}")
-        await self.coordinator.async_request_refresh()

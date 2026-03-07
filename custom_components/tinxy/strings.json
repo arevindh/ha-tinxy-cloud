@@ -2,8 +2,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Tinxy Cloud Setup",
-        "description": "Enter your Tinxy Cloud API key to connect your devices.",
+        "title": "Connect to Tinxy",
+        "description": "Enter your Tinxy API key to get started. You can find this in the Tinxy mobile app under Settings.",
         "data": {
           "api_key": "[%key:common::config_flow::data::api_key%]"
         }
