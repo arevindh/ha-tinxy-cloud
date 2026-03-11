@@ -27,8 +27,11 @@ from .tinxycloud import TinxyMQTTCredentials
 
 _LOGGER = logging.getLogger(__name__)
 
-RECONNECT_DELAY   = 5   # seconds – network drop reconnect delay
-MAX_AUTH_RETRIES  = 3   # max consecutive credential-refresh attempts
+RECONNECT_DELAY        = 5    # seconds – network drop reconnect delay
+MAX_AUTH_RETRIES       = 3    # max consecutive credential-refresh attempts before long backoff
+AUTH_BACKOFF_DELAY     = 300  # seconds – wait after exhausting credential retries before cycling again
+MQTT_KEEPALIVE         = 30   # seconds – MQTT keepalive interval
+MQTT_CONNECT_TIMEOUT   = 20   # seconds – connection attempt timeout
 
 
 class TinxyMQTTClient:
@@ -146,6 +149,8 @@ class TinxyMQTTClient:
                     username=creds.username,
                     password=creds.password,
                     identifier=f"ha-tinxy-{creds.username}",
+                    keepalive=MQTT_KEEPALIVE,
+                    timeout=MQTT_CONNECT_TIMEOUT,
                 ) as client:
                     self._client = client
                     auth_retries = 0  # reset on successful connect
@@ -163,16 +168,26 @@ class TinxyMQTTClient:
 
             except aiomqtt.MqttConnectError as exc:
                 # Broker rejected the connection – likely stale credentials
-                # (e.g. user reset their password).
+                # (e.g. user reset their password) or a temporary broker outage.
                 self._client = None
                 auth_retries += 1
                 if auth_retries > MAX_AUTH_RETRIES:
-                    _LOGGER.error(
-                        "Tinxy MQTT: broker rejected credentials %d times – giving up. "
-                        "Reload the integration after fixing the account password.",
-                        auth_retries,
+                    _LOGGER.warning(
+                        "Tinxy MQTT: broker rejected credentials %d times – "
+                        "waiting %ds before retrying. If the problem persists, check "
+                        "the account password or broker availability.",
+                        auth_retries, AUTH_BACKOFF_DELAY,
                     )
-                    return
+                    await asyncio.sleep(AUTH_BACKOFF_DELAY)
+                    auth_retries = 0  # reset counter so we try credential refresh again
+                    try:
+                        self._credentials = await self._credentials_fetcher()
+                    except Exception as fetch_exc:  # noqa: BLE001
+                        _LOGGER.error(
+                            "Tinxy MQTT: failed to refresh credentials after backoff: %s",
+                            fetch_exc,
+                        )
+                    continue
                 _LOGGER.warning(
                     "Tinxy MQTT: broker rejected connection (%s) – refreshing credentials "
                     "(attempt %d/%d).",
