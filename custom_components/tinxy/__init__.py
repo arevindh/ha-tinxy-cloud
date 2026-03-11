@@ -106,7 +106,9 @@ async def async_setup_entry(
     mqtt_client = TinxyMQTTClient(
         hass=hass,
         on_state_update=coordinator.async_update_from_mqtt,
+        on_disconnected=coordinator.async_mark_all_offline,
         credentials_fetcher=_get_mqtt_credentials,
+        entry_id=entry.entry_id,
     )
     # Give the REST client a reference so set_device_state() uses MQTT
     api.mqtt_client = mqtt_client
