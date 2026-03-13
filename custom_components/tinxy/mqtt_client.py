@@ -27,8 +27,12 @@ from .tinxycloud import TinxyMQTTCredentials
 
 _LOGGER = logging.getLogger(__name__)
 
-RECONNECT_DELAY   = 5   # seconds – network drop reconnect delay
-MAX_AUTH_RETRIES  = 3   # max consecutive credential-refresh attempts
+RECONNECT_DELAY        = 5    # seconds – network drop reconnect delay
+MAX_AUTH_RETRIES       = 3    # max consecutive credential-refresh attempts before long backoff
+AUTH_BACKOFF_DELAY     = 300  # seconds – wait after exhausting credential retries before cycling again
+MQTT_KEEPALIVE         = 30   # seconds – MQTT keepalive interval
+MQTT_CONNECT_TIMEOUT   = 20   # seconds – connection attempt timeout
+PUBLISH_RETRY_DELAY    = 3    # seconds – wait before retrying a failed publish
 
 
 class TinxyMQTTClient:
@@ -111,23 +115,44 @@ class TinxyMQTTClient:
             brightness: 0-100 percentage; when provided, sends a brightness command
                         instead of a simple toggle.
         """
-        if self._client is None:
-            _LOGGER.warning(
-                "Tinxy MQTT: cannot publish command for %s – not connected.", device_id
-            )
-            return
-
         if brightness is not None:
             payload = json.dumps({"n": relay_no, "bright": brightness, "by": "Home Assistant"})
         else:
             payload = json.dumps({"n": relay_no, "on": "1" if state == "ON" else "0", "by": "Home Assistant"})
 
         topic = f"/{device_id}"
-        try:
-            await self._client.publish(topic, payload, qos=0)
-            _LOGGER.debug("MQTT publish → %s : %s", topic, payload)
-        except Exception as exc:  # noqa: BLE001
-            _LOGGER.error("Tinxy MQTT: failed to publish command: %s", exc)
+        for attempt in range(2):  # try once, retry once after a brief wait
+            client = self._client
+            if client is None:
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Tinxy MQTT: not connected when publishing to %s – waiting %ds for reconnect.",
+                        device_id, PUBLISH_RETRY_DELAY,
+                    )
+                    await asyncio.sleep(PUBLISH_RETRY_DELAY)
+                    continue
+                _LOGGER.warning(
+                    "Tinxy MQTT: cannot publish command for %s – not connected after retry.",
+                    device_id,
+                )
+                return
+            try:
+                await client.publish(topic, payload, qos=0)
+                _LOGGER.debug("MQTT publish → %s : %s", topic, payload)
+                return
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 0:
+                    _LOGGER.debug(
+                        "Tinxy MQTT: publish to %s failed (%s) – waiting %ds for reconnect.",
+                        device_id, exc, PUBLISH_RETRY_DELAY,
+                    )
+                    self._client = None  # mark as disconnected; _run_loop will also do this
+                    await asyncio.sleep(PUBLISH_RETRY_DELAY)
+                else:
+                    _LOGGER.warning(
+                        "Tinxy MQTT: failed to publish command to %s after retry: %s",
+                        device_id, exc,
+                    )
 
     # ------------------------------------------------------------------
     # Internal
@@ -146,6 +171,8 @@ class TinxyMQTTClient:
                     username=creds.username,
                     password=creds.password,
                     identifier=f"ha-tinxy-{creds.username}",
+                    keepalive=MQTT_KEEPALIVE,
+                    timeout=MQTT_CONNECT_TIMEOUT,
                 ) as client:
                     self._client = client
                     auth_retries = 0  # reset on successful connect
@@ -163,16 +190,26 @@ class TinxyMQTTClient:
 
             except aiomqtt.MqttConnectError as exc:
                 # Broker rejected the connection – likely stale credentials
-                # (e.g. user reset their password).
+                # (e.g. user reset their password) or a temporary broker outage.
                 self._client = None
                 auth_retries += 1
                 if auth_retries > MAX_AUTH_RETRIES:
-                    _LOGGER.error(
-                        "Tinxy MQTT: broker rejected credentials %d times – giving up. "
-                        "Reload the integration after fixing the account password.",
-                        auth_retries,
+                    _LOGGER.warning(
+                        "Tinxy MQTT: broker rejected credentials %d times – "
+                        "waiting %ds before retrying. If the problem persists, check "
+                        "the account password or broker availability.",
+                        auth_retries, AUTH_BACKOFF_DELAY,
                     )
-                    return
+                    await asyncio.sleep(AUTH_BACKOFF_DELAY)
+                    auth_retries = 0  # reset counter so we try credential refresh again
+                    try:
+                        self._credentials = await self._credentials_fetcher()
+                    except Exception as fetch_exc:  # noqa: BLE001
+                        _LOGGER.error(
+                            "Tinxy MQTT: failed to refresh credentials after backoff: %s",
+                            fetch_exc,
+                        )
+                    continue
                 _LOGGER.warning(
                     "Tinxy MQTT: broker rejected connection (%s) – refreshing credentials "
                     "(attempt %d/%d).",
