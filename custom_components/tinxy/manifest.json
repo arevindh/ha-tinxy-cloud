@@ -7,6 +7,6 @@
   "documentation": "https://github.com/arevindh/ha-tinxy-cloud",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/arevindh/ha-tinxy-cloud/issues",
-  "requirements": ["aiomqtt>=1.2.1"],
+  "requirements": [],
   "version": "5.0.0"
 }

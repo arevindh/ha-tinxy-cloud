@@ -111,6 +111,26 @@ class TinxyUpdateCoordinator(DataUpdateCoordinator):
     # MQTT push interface
     # ------------------------------------------------------------------
 
+    def async_mark_all_offline(self) -> None:
+        """
+        Set status=0 on every relay so entities report unavailable.
+
+        Called by TinxyMQTTClient whenever the broker connection is lost
+        (unexpected disconnect or connect timeout). Entities will recover
+        automatically when the next /info messages arrive after reconnection.
+        """
+        if self.data is None:
+            return
+        new_data = {
+            relay_id: {**state, "status": 0}
+            for relay_id, state in self.data.items()
+        }
+        _LOGGER.error(
+            "Tinxy: MQTT disconnected – marking all %d relays offline.",
+            len(new_data),
+        )
+        self.async_set_updated_data(new_data)
+
     def async_update_from_mqtt(self, relay_id: str, state_dict: Dict[str, Any]) -> None:
         """
         Merge MQTT state into the coordinator's data store and notify listeners.
