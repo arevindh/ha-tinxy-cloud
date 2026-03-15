@@ -27,6 +27,7 @@ from typing import Any, Awaitable, Callable, Dict, Optional, Set
 import paho.mqtt.client as mqtt
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from .tinxycloud import TinxyMQTTCredentials
 
 _LOGGER = logging.getLogger(__name__)
@@ -257,16 +258,10 @@ class TinxyMQTTClient:
                     )
 
                     if auth_retries > MAX_AUTH_RETRIES:
-                        _LOGGER.error(
-                            "Tinxy MQTT: giving up after %d consecutive auth failures - "
-                            "scheduling integration reload.",
-                            auth_retries,
-                        )  # intentional error level - fatal condition
-                        if self._entry_id:
-                            self._hass.config_entries.async_schedule_reload(
-                                self._entry_id
-                            )
-                        return
+                        raise ConfigEntryAuthFailed(
+                            f"Tinxy MQTT: broker refused connection after {auth_retries} "
+                            "consecutive auth failures. Please re-authenticate."
+                        )
 
                     if is_auth:
                         try:
