@@ -82,7 +82,7 @@ class TinxyMQTTClient:
         self._task = self._hass.async_create_background_task(
             self._run_loop(), "tinxy_mqtt_loop"
         )
-        _LOGGER.error(
+        _LOGGER.info(
             "Tinxy MQTT: client started for %d device(s), broker %s:%d.",
             len(device_ids), self._credentials.broker, self._credentials.port,
         )
@@ -90,7 +90,7 @@ class TinxyMQTTClient:
     async def async_stop(self) -> None:
         """Cancel the background loop and disconnect paho."""
         if self._task and not self._task.done():
-            _LOGGER.error("Tinxy MQTT: stopping - cancelling background loop.")
+            _LOGGER.debug("Tinxy MQTT: stopping - cancelling background loop.")
             self._task.cancel()
             try:
                 await self._task
@@ -103,7 +103,7 @@ class TinxyMQTTClient:
             except Exception:  # noqa: BLE001
                 pass
             self._paho = None
-        _LOGGER.error("Tinxy MQTT: client stopped.")
+        _LOGGER.debug("Tinxy MQTT: client stopped.")
 
     async def async_publish_command(
         self,
@@ -132,7 +132,7 @@ class TinxyMQTTClient:
                     "Tinxy MQTT: publish to %s failed (rc=%d).", topic, result.rc
                 )
             else:
-                _LOGGER.error("Tinxy MQTT: publish -> %s : %s", topic, payload)
+                _LOGGER.debug("Tinxy MQTT: publish -> %s : %s", topic, payload)
         except Exception as exc:  # noqa: BLE001
             _LOGGER.error("Tinxy MQTT: failed to publish command: %s", exc)
 
@@ -213,7 +213,7 @@ class TinxyMQTTClient:
             client.on_disconnect = on_disconnect
             client.on_message = on_message
 
-            _LOGGER.error(
+            _LOGGER.debug(
                 "Tinxy MQTT: connecting to %s:%d as '%s' (attempt #%d).",
                 creds.broker, creds.port, creds.username, attempt,
             )
@@ -229,7 +229,7 @@ class TinxyMQTTClient:
                         asyncio.shield(connected_fut), timeout=CONNECT_TIMEOUT
                     )
                 except asyncio.TimeoutError:
-                    _LOGGER.error(
+                    _LOGGER.warning(
                         "Tinxy MQTT: connect to %s timed out after %ds "
                         "(broker unreachable / firewall DROP). Retrying in %ds.",
                         creds.broker, CONNECT_TIMEOUT, RECONNECT_DELAY,
@@ -248,7 +248,7 @@ class TinxyMQTTClient:
                     is_auth = conn_rc in _AUTH_CONNECT_CODES
                     auth_retries += 1
 
-                    _LOGGER.error(
+                    _LOGGER.warning(
                         "Tinxy MQTT: broker at %s refused connection "
                         "(CONNACK rc=%d, %s). Attempt %d/%d.",
                         creds.broker, conn_rc,
@@ -261,7 +261,7 @@ class TinxyMQTTClient:
                             "Tinxy MQTT: giving up after %d consecutive auth failures - "
                             "scheduling integration reload.",
                             auth_retries,
-                        )
+                        )  # intentional error level - fatal condition
                         if self._entry_id:
                             self._hass.config_entries.async_schedule_reload(
                                 self._entry_id
@@ -271,11 +271,11 @@ class TinxyMQTTClient:
                     if is_auth:
                         try:
                             self._credentials = await self._credentials_fetcher()
-                            _LOGGER.error(
+                            _LOGGER.info(
                                 "Tinxy MQTT: credentials refreshed - retrying connection."
                             )
                         except Exception as fetch_exc:  # noqa: BLE001
-                            _LOGGER.error(
+                            _LOGGER.warning(
                                 "Tinxy MQTT: failed to refresh credentials: %s - "
                                 "retrying in %ds.",
                                 fetch_exc, RECONNECT_DELAY,
@@ -287,7 +287,7 @@ class TinxyMQTTClient:
 
                 # Successfully connected
                 auth_retries = 0
-                _LOGGER.error(
+                _LOGGER.info(
                     "Tinxy MQTT: connected to %s:%d as '%s'. "
                     "Subscribing to %d device(s) (keepalive=%ds).",
                     creds.broker, creds.port, creds.username,
@@ -296,9 +296,9 @@ class TinxyMQTTClient:
 
                 for device_id in self._device_ids:
                     client.subscribe(f"/{device_id}/#", qos=0)
-                    _LOGGER.error("Tinxy MQTT: subscribed to /%s/#", device_id)
+                    _LOGGER.debug("Tinxy MQTT: subscribed to /%s/#", device_id)
 
-                _LOGGER.error(
+                _LOGGER.debug(
                     "Tinxy MQTT: all %d subscriptions active - "
                     "paho will detect silent disconnects via keepalive.",
                     len(self._device_ids),
@@ -313,12 +313,12 @@ class TinxyMQTTClient:
                 self._paho = None
 
                 if disc_rc == 0:
-                    _LOGGER.error(
+                    _LOGGER.info(
                         "Tinxy MQTT: clean disconnect from %s. Reconnecting in %ds.",
                         creds.broker, RECONNECT_DELAY,
                     )
                 else:
-                    _LOGGER.error(
+                    _LOGGER.warning(
                         "Tinxy MQTT: unexpected disconnect from %s (rc=%d - %s). "
                         "Reconnecting in %ds.",
                         creds.broker, disc_rc,
@@ -330,7 +330,7 @@ class TinxyMQTTClient:
                 await asyncio.sleep(RECONNECT_DELAY)
 
             except asyncio.CancelledError:
-                _LOGGER.error("Tinxy MQTT: loop cancelled (integration unloading).")
+                _LOGGER.debug("Tinxy MQTT: loop cancelled (integration unloading).")
                 try:
                     client.disconnect()
                     client.loop_stop()
@@ -356,7 +356,7 @@ class TinxyMQTTClient:
         try:
             data = json.loads(payload)
         except (json.JSONDecodeError, ValueError, TypeError):
-            _LOGGER.error("Tinxy MQTT: ignoring non-JSON payload on %s", topic)
+            _LOGGER.warning("Tinxy MQTT: ignoring non-JSON payload on %s", topic)
             return
 
         parts = topic.strip("/").split("/")
@@ -409,7 +409,7 @@ class TinxyMQTTClient:
         if not state_dict:
             return
 
-        _LOGGER.error("Tinxy MQTT: command-echo for %s: %s", relay_id, state_dict)
+        _LOGGER.debug("Tinxy MQTT: command-echo for %s: %s", relay_id, state_dict)
         try:
             self._on_state_update(relay_id, state_dict)
         except Exception as exc:  # noqa: BLE001
